@@ -129,7 +129,7 @@ webhooks:
     admissionReviewVersions: ["v1"]
     sideEffects: None
     timeoutSeconds: 5
-    excludeResourceRules: # here is the new field
+    exclusionRules: # here is the new field
       - apiGroups:   [""] #should support wildcard just like regular rules
         apiVersions: ["v1"]
         operations:  ["CREATE"]
@@ -215,7 +215,124 @@ The ValidatingAdmissionPolicy API will be updated to include Namespaces in v1.27
 Could be combined with CEL admission policies to allow cluster operator to suggest system critical components that should be excluded. 
 
 **Alternatives Considered**
-Allowing globallly configurable exclusion list passed to api-server via file and command line flag
+Allowing globallly configurable exclusion list passed to api-server via file and command line flag.
+
+There is currently no way to do exclusion on resource types. For example, you cannot exclude specific types like Leases using the current webhook configurations. If I wanted to include all cluster resources into my webhook besides leases there's no way to do that today but with these exclusion rules you could do that.
+
+```
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: "test"
+webhooks:
+  - name: "pod-policy.example.com"
+    rules:
+      - apiGroups:   ["*"]
+        apiVersions: ["*"]
+        operations:  ["*"]
+        resources:   ["*"]
+        scope: "*"
+...
+    exclusionRules:
+      - apiGroups:   ["*"]
+        apiVersions: ["*"]
+        operations:  ["*"]
+        resources:   ["leases"]
+```
+
+or more simply 
+
+```
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: "test"
+webhooks:
+  - name: "pod-policy.example.com"
+    rules:
+      - apiGroups:   ["*"]
+        apiVersions: ["*"]
+        operations:  ["*"]
+        resources:   ["*"]
+        scope: "*"
+...
+    exclusionRules:
+      - resources:   ["leases"]
+```
+
+Name and namespace selection of resources can already be achieved by using multiple validating and mutating webhook configurations i.e. select all pods in all namespaces except for a specific pod (i.e. core-dns) in a specific namespace (i.e. kube-system).
+
+```
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: "test"
+webhooks:
+  - name: "pod-policy.example.com"
+    rules:
+      - apiGroups:   ["*"]
+        apiVersions: ["*"]
+        operations:  ["*"]
+        resources:   ["pods"]
+        scope: "*"
+    objectSelector:
+      matchExpressions:
+        - key: name
+          operator: NotIn
+          values: ["core-dns"]
+    namespaceSelector:
+      matchExpressions:
+        - key: name
+          operator: In
+          values: ["kube-system"]
+```
+and
+```
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: "test"
+webhooks:
+  - name: "pod-policy.example.com"
+    rules:
+      - apiGroups:   ["*"]
+        apiVersions: ["*"]
+        operations:  ["*"]
+        resources:   ["pods"]
+        scope: "*"
+    namespaceSelector:
+      matchExpressions:
+        - key: name
+          operator: NotIn
+          values: ["kube-system"]
+```
+
+vs
+
+```
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: "test"
+webhooks:
+  - name: "pod-policy.example.com"
+    rules:
+      - apiGroups:   ["*"]
+        apiVersions: ["*"]
+        operations:  ["*"]
+        resources:   ["pods"]
+        scope: "*"
+...
+    exclusionRules:
+      - resources:   ["pods"]
+        objectNames: ["core-dns"]
+        Namespaces: ["kube-system"]    
+```
+
+Although both can achieve the same thing for objectNamespace/name selection, the latter with this new feature allows for containing the selection within a single object. The benefit of this is we can use CEL to enforce required exclusions. We cannot use CEL to enforce exclusions that would require the user to create multiple ValidatingWebhookConfigurations to achieve the functionality. This is useful for a cluster-operator who wants to suggest to users that all webhooks should have specific things excluded.
+
+
+Another alternative is to use CEL for selection discussed in this alternative KEP: https://github.com/kubernetes/enhancements/pull/3717 
 
 <!--
 This section should contain enough information that the specifics of your
